@@ -1,11 +1,6 @@
 import datetime
-import pickle
 import math
-import os
 import json
-import threading
-
-import openai
 
 from .system import get_heartbeat, get_login_event, package_function_response, package_summarize_message, get_initial_boot_messages
 from .memory import CoreMemory as Memory, summarize_messages
@@ -156,6 +151,33 @@ class AgentAsync(object):
         self.pause_heartbeats_minutes = 0
 
         self.first_message_verify_mono = first_message_verify_mono
+
+        # Controls if the convo memory pressure warning is triggered
+        # When an alert is sent in the message queue, set this to True (to avoid repeat alerts)
+        # When the summarizer is run, set this back to False (to reset)
+        self.agent_alerted_about_memory_pressure = False
+
+    def wipe(self):
+        """Reinitialize the agent."""
+
+        # Initialize the memory object
+        self.memory = initialize_memory(self.persona_notes, self.human_notes)
+        # Once the memory object is initialize, use it to "bake" the system message
+        self._messages = initialize_message_sequence(
+            self.system,
+            self.memory,
+        )
+        # Keep track of the total number of messages throughout all time
+        self.messages_total = (len(self._messages) - 1)  # (-system)
+        self.messages_total_init = self.messages_total
+        printd(f"AgentAsync initialized, self.messages_total={self.messages_total}")
+
+        # creates a new agent object in the database
+        self.persistence_manager.init(self)
+
+        # State needed for heartbeat pausing
+        self.pause_heartbeats_start = None
+        self.pause_heartbeats_minutes = 0
 
         # Controls if the convo memory pressure warning is triggered
         # When an alert is sent in the message queue, set this to True (to avoid repeat alerts)
