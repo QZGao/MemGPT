@@ -1,13 +1,13 @@
 
 from .prompts import gpt_functions
 from .prompts import gpt_system
-from .agent import AgentAsync
+from .memgpt_agent import AIAgent
 from .utils import printd
 
 
 DEFAULT = 'memgpt_chat'
 
-def use_preset(preset_name, model, persona, human, interface, persistence_manager):
+def use_preset(preset_name, model, persona, human, interface, persistence_manager, skip_verify):
     """Storing combinations of SYSTEM + FUNCTION prompts"""
 
     if preset_name == 'memgpt_chat':
@@ -22,7 +22,7 @@ def use_preset(preset_name, model, persona, human, interface, persistence_manage
         printd(f"Available functions:\n", [x['name'] for x in available_functions])
         assert len(functions) == len(available_functions)
 
-        return AgentAsync(
+        return AIAgent(
             model=model,
             system=gpt_system.get_system_text(preset_name),
             functions=available_functions,
@@ -32,6 +32,7 @@ def use_preset(preset_name, model, persona, human, interface, persistence_manage
             human_notes=human,
             # gpt-3.5-turbo tends to omit inner monologue, relax this requirement for now
             first_message_verify_mono=True if 'gpt-4' in model else False,
+            skip_verify=skip_verify
         )
 
     else:

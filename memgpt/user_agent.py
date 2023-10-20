@@ -3,14 +3,13 @@ import os
 import pickle
 import sys
 
-from rich.console import Console
-
 import interface
 from interface import print_messages
-from memgpt import utils, system, agent
-from memgpt.agent import AgentAsync
+from memgpt import utils, system
+from memgpt.agent import Agent, ConversationEndedException
 from memgpt.persistence_manager import InMemoryStateManager
 
+from rich.console import Console
 console = Console()
 
 
@@ -22,12 +21,25 @@ def clear_line():
         sys.stdout.flush()
 
 
-class UserAgent:
-    def __init__(self, memgpt_agent: AgentAsync):
-        """"""
-        self.memgpt_agent = memgpt_agent
+class UserAgent(Agent):
+    def __init__(self):
+        """Initialization of user agent."""
 
-    async def generate_reply(self):
+    async def initiate_chat(self, recipient: Agent):
+        """Initiate the conversation."""
+        initial_message = await self.generate_reply()
+        await self.send(initial_message, recipient)
+
+    async def send(self, message: str, recipient: Agent):
+        """Send a message to the recipient."""
+        await recipient.receive(message, self)
+
+    async def receive(self, message: str, sender: Agent):
+        """Receive a message from the recipient, validate, then generate a reply and send."""
+        reply = await self.generate_reply(message)
+        await self.send(reply, sender)
+
+    async def generate_reply(self, message: str = None):
         # Ask for user input
         user_input = console.input("[bold cyan]Enter your message:[/bold cyan] ")
         clear_line()
@@ -57,7 +69,7 @@ class UserAgent:
         if user_input == "//":
             return await self._on_multiline()
         elif user_input.lower() == "/exit":
-            return "TERMINATE"
+            raise ConversationEndedException()
         elif user_input.lower() == "/savechat":
             return await self._on_savechat()
         elif user_input.lower() == "/save":

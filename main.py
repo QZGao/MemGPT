@@ -10,6 +10,7 @@ import memgpt.presets as presets
 import memgpt.constants as constants
 import memgpt.personas.personas as personas
 import memgpt.humans.humans as humans
+from memgpt.agent import ConversationEndedException
 from memgpt.persistence_manager import InMemoryStateManager, InMemoryStateManagerWithPreloadedArchivalMemory, InMemoryStateManagerWithFaiss
 from memgpt.user_agent import UserAgent, console, clear_line
 
@@ -26,13 +27,7 @@ flags.DEFINE_string("archival_storage_files_compute_embeddings", default="", req
 flags.DEFINE_string("archival_storage_sqldb", default="", required=False, help="Specify SQL database to pre-load into archival memory")
 
 
-async def main():
-    utils.DEBUG = FLAGS.debug
-    logging.getLogger().setLevel(logging.CRITICAL)
-    if FLAGS.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-    print("Running... [exit by typing '/exit']")
-
+async def get_persistence_manager():
     if FLAGS.archival_storage_faiss_path:
         index, archival_database = utils.prepare_archival_index(FLAGS.archival_storage_faiss_path)
         persistence_manager = InMemoryStateManagerWithFaiss(index, archival_database)
@@ -47,17 +42,23 @@ async def main():
         persistence_manager = InMemoryStateManagerWithFaiss(index, archival_database)
     else:
         persistence_manager = InMemoryStateManager()
-    memgpt_agent = presets.use_preset(presets.DEFAULT, FLAGS.model, personas.get_persona_text(FLAGS.persona), humans.get_human_text(FLAGS.human), interface, persistence_manager)
-    print_messages = interface.print_messages
-    await print_messages(memgpt_agent.messages)
 
-    user_agent = UserAgent(memgpt_agent)
+    return persistence_manager
 
-    counter = 0
-    user_input = None
-    skip_next_user_input = False
-    user_message = None
-    USER_GOES_FIRST = FLAGS.first
+
+async def main():
+    utils.DEBUG = FLAGS.debug
+    logging.getLogger().setLevel(logging.CRITICAL)
+    if FLAGS.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    print("Running... [exit by typing '/exit']")
+
+    persistence_manager = await get_persistence_manager()
+
+    memgpt_agent = presets.use_preset(presets.DEFAULT, FLAGS.model, personas.get_persona_text(FLAGS.persona), humans.get_human_text(FLAGS.human), interface, persistence_manager, skip_verify=FLAGS.no_verify)
+    await interface.print_messages(memgpt_agent.messages)
+
+    user_agent = UserAgent()
 
     if FLAGS.archival_storage_sqldb:
         if not os.path.exists(FLAGS.archival_storage_sqldb):
@@ -76,34 +77,21 @@ async def main():
     if "GITHUB_ACTIONS" in os.environ:
         return
 
-    if not USER_GOES_FIRST:
-        console.input('[bold cyan]Hit enter to begin (will request first MemGPT message)[/bold cyan]')
-        clear_line()
-        print()
+    try:
+        # If user goes first
+        if FLAGS.first:
+            await user_agent.initiate_chat(memgpt_agent)
 
-    while True:
-        if not skip_next_user_input and (counter > 0 or USER_GOES_FIRST):
-            user_message = await user_agent.generate_reply()
-            if user_message == "TERMINATE":
-                break
+        else:
+            console.input('[bold cyan]Hit enter to begin (will request first MemGPT message)[/bold cyan]')
+            clear_line()
+            print()
 
-        skip_next_user_input = False
+            await memgpt_agent.initiate_chat(user_agent)
 
-        with console.status("[bold cyan]Thinking...") as status:
-            new_messages, heartbeat_request, function_failed, token_warning = await memgpt_agent.step(user_message, first_message=False, skip_verify=FLAGS.no_verify)
-
-            # Skip user inputs if there's a memory warning, function execution failed, or the agent asked for control
-            if token_warning:
-                user_message = system.get_token_limit_warning()
-                skip_next_user_input = True
-            elif function_failed:
-                user_message = system.get_heartbeat(constants.FUNC_FAILED_HEARTBEAT_MESSAGE)
-                skip_next_user_input = True
-            elif heartbeat_request:
-                user_message = system.get_heartbeat(constants.REQ_HEARTBEAT_MESSAGE)
-                skip_next_user_input = True
-
-        counter += 1
+    # Conversation ended here
+    except ConversationEndedException:
+        pass
 
     print("Finished.")
 
